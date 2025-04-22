@@ -7,6 +7,8 @@ import os
 import mlflow
 import mlflow.sklearn
 from sklearn.metrics import mean_absolute_error
+
+
 def create_features(df):
     df = df.copy()
     df['hour'] = df.index.hour
@@ -15,7 +17,7 @@ def create_features(df):
     return df
 
 
-def train_xgb (data_path="data/processed/energy_clean.csv", model_dir='mlops'):
+def train_xgb (data_path="data/processed/energy_clean.csv", model_dir='models'):
     # model path
     timestamp = dt.datetime.now().strftime('%m%d_%H%M')
     model_filename = f"model_{timestamp}.pkl"
@@ -25,12 +27,8 @@ def train_xgb (data_path="data/processed/energy_clean.csv", model_dir='mlops'):
     # load data
     df = pd.read_csv(data_path, parse_dates=['datetime'], index_col='datetime')
     df = create_features(df)
-    
-    # Check for NaN or infinite values in the label column
-    if df['Global_active_power'].isnull().any() or np.isinf(df['Global_active_power']).any():
-        # Handle NaN or infinite values
-        df = df.dropna(subset=['Global_active_power'])  # Drop rows with NaN in the label column
-        df = df[~np.isinf(df['Global_active_power'])]   # Remove rows with infinite values
+    df = df.dropna(subset=['Global_active_power'])  # Drop NaN
+    df = df[~np.isinf(df['Global_active_power'])]   # Remove infinite value
     
     X = df[['hour', 'dayofweek', 'month']]
     y = df['Global_active_power']
@@ -50,19 +48,22 @@ def train_xgb (data_path="data/processed/energy_clean.csv", model_dir='mlops'):
     os.makedirs(model_dir, exist_ok=True)
     joblib.dump(model, model_path)
     print(f"Model saved to {model_path}")
-
+    
+    # save model path
+    latest_path_file = os.path.join(model_dir, "latest_model_path.txt")
+    with open(latest_path_file, "w") as f:
+        f.write(model_path)
+    print(f"Saved model path to {latest_path_file}")
+    
     ### MLflow ###
     # set experiment name
     mlflow.set_experiment("energy_xgb_experiment")
-
     with mlflow.start_run(run_name=f"xgb_model_{timestamp}"):
         mlflow.log_param("n_estimators", 100)
         mlflow.log_param("learning_rate", 0.1)
         mlflow.log_param("max_depth", 4)
         mlflow.log_param("tree_method", "hist")
         mlflow.log_param("random_state", 42)
-
-        mlflow.sklearn.log_model(model, "xgb_model")
         
         input_example = pd.DataFrame([[12.0, 2.0, 4.0]], columns=['hour', 'dayofweek', 'month'])
         mlflow.sklearn.log_model(model, "xgb_model", input_example=input_example)
@@ -73,7 +74,6 @@ def train_xgb (data_path="data/processed/energy_clean.csv", model_dir='mlops'):
         mlflow.log_metric("mae", mae)
         
         print(f"MLflow run logged (MAE: {mae:.3f})")
-    
 
 
 if __name__ == "__main__":

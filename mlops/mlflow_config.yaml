@@ -1,0 +1,9 @@
+experiment:
+  name: energy_xgb_experiment
+  artifact_location: ./mlruns
+
+model:
+  name: xgb_energy_forecast
+  path: ./models/
+  input_example: [12.0, 2.0, 4.0]
+  flavor: sklearn

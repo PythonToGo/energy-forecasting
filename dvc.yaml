@@ -1,0 +1,17 @@
+stages:
+  preprocess:
+    cmd: python src/data_loader.py
+    deps:
+      - src/data_loader.py
+      - data/raw/household_power_consumption.txt
+    outs:
+      - data/processed/energy_clean.csv
+  
+  train:
+    cmd: python src/train_model.py
+    deps:
+      - src/train_model.py
+      - data/processed/energy_clean.csv
+    outs:
+      - models/latest_model_path.txt
+

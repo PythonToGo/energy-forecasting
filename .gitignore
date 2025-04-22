@@ -1,16 +1,25 @@
 STATUS.md
 
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
 venv/
 # mlops/
 # data/processed/
 # data/raw/
 
-*.pkl
-*.csv
-*.json
-*.log
-*.log.*
-*.log.*.*
+# DVC-managed model/data artifacts
+models/*.pkl
+data/**/*.csv
+data/**/*.txt
 
 data/raw/household_power_consumption.txt
 mlruns/
+
+# OS
+.DS_Store
