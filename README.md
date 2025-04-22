@@ -3,7 +3,6 @@
 An end-to-end MLOps pipeline for predicting household energy consumption using time-based features, built with **FastAPI**, **Streamlit**, **MLflow**, **DVC**, and **Prefect**.  
 This project is fully containerized and reproducible via Docker.
 
-![image](https://github.com/user-attachments/assets/716d1da6-d36b-48f6-967f-89fcdc56391a)
 
 > 🚀 Current setup: Local deployment via Docker on `0.0.0.0`.
 
@@ -130,8 +129,8 @@ Access: `http://localhost:8502`
 - Visualize prediction history
 - Check real historical energy usage
 
-![image](https://github.com/user-attachments/assets/9545cfd4-e937-4288-97bd-cfb8590d6e07)
 
+![image](https://github.com/user-attachments/assets/716d1da6-d36b-48f6-967f-89fcdc56391a)
 ---
 
 ## 🔄 Reproducible Training (DVC)
