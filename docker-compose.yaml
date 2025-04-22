@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  energy-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: energy-forecasting
+    ports:
+      - "8000:8000"    # FastAPI
+      - "8502:8502"    # Streamlit
+      - "5050:5050"    # MLflow UI
+    volumes:
+      - .:/app         # code live update
+    command: ["bash", "run_all.sh"]
