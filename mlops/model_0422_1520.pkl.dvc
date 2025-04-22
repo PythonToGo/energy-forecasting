@@ -1,0 +1,5 @@
+outs:
+- md5: fd20f545a7e441560225e0f8d201847c
+  size: 175154
+  hash: md5
+  path: model_0422_1520.pkl
