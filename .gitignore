@@ -1,9 +1,9 @@
 STATUS.md
 
 venv/
-mlops/
-data/processed/
-data/raw/
+# mlops/
+# data/processed/
+# data/raw/
 
 *.pkl
 *.csv
@@ -11,3 +11,6 @@ data/raw/
 *.log
 *.log.*
 *.log.*.*
+
+data/raw/household_power_consumption.txt
+mlruns/
