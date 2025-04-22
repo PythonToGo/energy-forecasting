@@ -1,0 +1,13 @@
+STATUS.md
+
+venv/
+mlops/
+data/processed/
+data/raw/
+
+*.pkl
+*.csv
+*.json
+*.log
+*.log.*
+*.log.*.*
