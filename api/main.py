@@ -1,192 +1,144 @@
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel, Field, validator
-from typing import Dict, Any, List, Optional
+"""FastAPI inference service — stateful, recursive multi-step forecasting.
+
+The model now consumes recent-consumption features (lags + rolling stats), so
+serving is **stateful**: we seed each forecast from the tail of the historical
+series and feed every prediction back in to build the next step's features.
+Feature construction is shared with training via ``features.py``, guaranteeing
+train/serve parity.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sys
+from datetime import datetime
+from functools import lru_cache
+from typing import Any
+
 import joblib
 import numpy as np
 import pandas as pd
-import json
-import os
-import logging
-from functools import lru_cache
-from datetime import datetime, timedelta
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# The shared feature pipeline lives in src/; the package restructure (a later
+# phase) will replace this path shim with a proper import.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import features  # noqa: E402
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-MODEL_PATH_FILE = 'models/latest_model_path.txt'
-MODEL_METADATA_FILE = 'models/latest_model_metadata.json'
+MODEL_PATH_FILE = os.environ.get("MODEL_PATH_FILE", "models/latest_model_path.txt")
+MODEL_METADATA_FILE = os.environ.get("MODEL_METADATA_FILE", "models/latest_model_metadata.json")
+DATA_PATH = os.environ.get("PROCESSED_DATA_PATH", "data/processed/energy_clean.csv")
+HISTORY_HOURS = features.WARMUP_HOURS + 48  # context window to seed lags + rolling
+MAX_HORIZON = 168
 
 app = FastAPI(
-    title="Energy Consumption Prediction API",
-    description="API for predicting household energy consumption based on time features",
-    version="2.0.0"
+    title="Energy Consumption Forecasting API",
+    description="Recursive multi-step forecasting from recent household consumption.",
+    version="3.0.0",
 )
-
-
-# ── Input / output schemas ───────────────────────────────────────────────────
-
-class EnergyInput(BaseModel):
-    hour: int = Field(..., ge=0, le=23, description="Hour of the day (0–23)")
-    dayofweek: int = Field(..., ge=0, le=6, description="Day of the week (0=Mon … 6=Sun)")
-    month: int = Field(..., ge=1, le=12, description="Month of the year (1–12)")
-
-    @validator('hour')
-    def validate_hour(cls, v):
-        if not 0 <= v <= 23:
-            raise ValueError("Hour must be between 0 and 23")
-        return v
-
-    @validator('dayofweek')
-    def validate_dayofweek(cls, v):
-        if not 0 <= v <= 6:
-            raise ValueError("Day of week must be between 0 and 6")
-        return v
-
-    @validator('month')
-    def validate_month(cls, v):
-        if not 1 <= v <= 12:
-            raise ValueError("Month must be between 1 and 12")
-        return v
-
-
-class PredictionResponse(BaseModel):
-    predicted_energy_kW: float
-    input_data: Dict[str, Any]
 
 
 class ForecastPoint(BaseModel):
-    hour: int
-    dayofweek: int
-    month: int
+    timestamp: datetime
     predicted_energy_kW: float
 
 
 class ForecastResponse(BaseModel):
+    from_timestamp: datetime
     horizon_hours: int
-    forecast: List[ForecastPoint]
+    forecast: list[ForecastPoint]
 
-
-# ── Feature engineering (must match train_model.py) ─────────────────────────
-
-def build_feature_vector(hour: int, dayofweek: int, month: int) -> np.ndarray:
-    is_weekend = int(dayofweek >= 5)
-    hour_sin = np.sin(2 * np.pi * hour / 24)
-    hour_cos = np.cos(2 * np.pi * hour / 24)
-    dow_sin = np.sin(2 * np.pi * dayofweek / 7)
-    dow_cos = np.cos(2 * np.pi * dayofweek / 7)
-    month_sin = np.sin(2 * np.pi * (month - 1) / 12)
-    month_cos = np.cos(2 * np.pi * (month - 1) / 12)
-    # Order must match FEATURES in train_model.py
-    return np.array([[
-        hour, dayofweek, month,
-        hour_sin, hour_cos,
-        dow_sin, dow_cos,
-        month_sin, month_cos,
-        is_weekend,
-    ]])
-
-
-# ── Model / metadata loading ─────────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
-def load_model():
+def load_model() -> Any:
     if not os.path.exists(MODEL_PATH_FILE):
-        logger.error(f"Model path file not found: {MODEL_PATH_FILE}")
-        raise HTTPException(status_code=500, detail="Model configuration not found")
-    with open(MODEL_PATH_FILE, 'r') as f:
+        raise HTTPException(status_code=503, detail="Model not available — train first")
+    with open(MODEL_PATH_FILE) as f:
         model_path = f.read().strip()
     if not os.path.exists(model_path):
-        logger.error(f"Model file not found: {model_path}")
-        raise HTTPException(status_code=500, detail=f"Model file not found at {model_path}")
-    logger.info(f"Loading model from {model_path}")
+        raise HTTPException(status_code=503, detail=f"Model file missing: {model_path}")
+    logger.info("Loading model from %s", model_path)
     return joblib.load(model_path)
 
 
 @lru_cache(maxsize=1)
-def load_metadata() -> dict:
+def load_metadata() -> dict[str, Any]:
     if not os.path.exists(MODEL_METADATA_FILE):
-        return {"note": "metadata file not found — retrain the model to generate it"}
-    with open(MODEL_METADATA_FILE, 'r') as f:
-        return json.load(f)
+        return {"note": "metadata not found — retrain the model"}
+    with open(MODEL_METADATA_FILE) as f:
+        data: dict[str, Any] = json.load(f)
+    return data
 
 
-def get_model():
-    return load_model()
+@lru_cache(maxsize=1)
+def load_history() -> pd.Series:
+    if not os.path.exists(DATA_PATH):
+        raise HTTPException(status_code=503, detail="Historical data not available")
+    df = pd.read_csv(DATA_PATH, parse_dates=["datetime"], index_col="datetime")
+    series = df[features.TARGET].dropna()
+    if len(series) < features.WARMUP_HOURS:
+        raise HTTPException(status_code=503, detail="Not enough history for a forecast")
+    return series.tail(HISTORY_HOURS)
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+def _recursive_forecast(model: Any, history: pd.Series, horizon: int) -> list[ForecastPoint]:
+    """Roll the model forward `horizon` hours, feeding predictions back as lags."""
+    series = history.copy()
+    points: list[ForecastPoint] = []
+    for _ in range(horizon):
+        next_ts = series.index[-1] + pd.Timedelta(hours=1)
+        extended = pd.concat([series, pd.Series([np.nan], index=[next_ts])])
+        feat = features.add_features(extended.to_frame(name=features.TARGET))
+        x = feat.loc[[next_ts], features.FEATURE_COLUMNS]
+        y_pred = float(model.predict(x)[0])
+        series.loc[next_ts] = y_pred
+        points.append(
+            ForecastPoint(
+                timestamp=next_ts.to_pydatetime(),
+                predicted_energy_kW=round(y_pred, 3),
+            )
+        )
+    return points
+
 
 @app.get("/", tags=["General"])
-def read_root():
-    return {"message": "Energy Consumption Prediction API v2"}
+def read_root() -> dict[str, str]:
+    return {"message": "Energy Consumption Forecasting API v3"}
 
 
 @app.get("/health", tags=["Health"])
-def health_check():
+def health_check() -> dict[str, str]:
     return {"status": "healthy"}
 
 
 @app.get("/model/info", tags=["Model"])
-def model_info():
-    """
-    Return metadata for the currently loaded model: features, split sizes,
-    evaluation metrics, and baseline comparisons.
-    """
+def model_info() -> dict[str, Any]:
+    """Return metadata for the currently loaded model."""
     return load_metadata()
 
 
-@app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
-def predict_energy(data: EnergyInput, model=Depends(get_model)):
-    """
-    Predict energy consumption for a single time point using time-based features.
-    """
-    try:
-        X = build_feature_vector(data.hour, data.dayofweek, data.month)
-        y_pred = float(model.predict(X)[0])
-        return PredictionResponse(
-            predicted_energy_kW=round(y_pred, 3),
-            input_data=data.dict(),
-        )
-    except Exception as e:
-        logger.exception("Prediction error")
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+@app.get("/forecast", response_model=ForecastResponse, tags=["Prediction"])
+def forecast(horizon: int = 24) -> ForecastResponse:
+    """Forecast the next `horizon` hours recursively from the latest data."""
+    if not 1 <= horizon <= MAX_HORIZON:
+        raise HTTPException(status_code=422, detail=f"horizon must be 1..{MAX_HORIZON}")
+    history = load_history()
+    points = _recursive_forecast(load_model(), history, horizon)
+    return ForecastResponse(
+        from_timestamp=history.index[-1].to_pydatetime(),
+        horizon_hours=horizon,
+        forecast=points,
+    )
 
 
-@app.post("/forecast", response_model=ForecastResponse, tags=["Prediction"])
-def forecast_energy(data: EnergyInput, horizon: int = 24, model=Depends(get_model)):
-    """
-    Predict energy consumption for the next `horizon` hours (default 24) starting
-    from the given hour / dayofweek / month.
-
-    The sequence rolls forward hour by hour, advancing dayofweek and month
-    when crossing midnight / month boundaries.
-    """
-    if not 1 <= horizon <= 168:
-        raise HTTPException(status_code=422, detail="horizon must be between 1 and 168")
-    try:
-        # Build a reference datetime using the provided fields; year/day are arbitrary
-        # since the model only uses hour, dayofweek, month.
-        # We pick a known Monday in the given month to anchor day-of-week arithmetic.
-        base = datetime(2000, data.month, 1)
-        # Advance to the target dayofweek
-        days_ahead = (data.dayofweek - base.weekday()) % 7
-        base = base + timedelta(days=days_ahead)
-        base = base.replace(hour=data.hour)
-
-        results: List[ForecastPoint] = []
-        for step in range(horizon):
-            ts = base + timedelta(hours=step)
-            h, dow, m = ts.hour, ts.weekday(), ts.month
-            X = build_feature_vector(h, dow, m)
-            y_pred = round(float(model.predict(X)[0]), 3)
-            results.append(ForecastPoint(
-                hour=h, dayofweek=dow, month=m, predicted_energy_kW=y_pred
-            ))
-
-        return ForecastResponse(horizon_hours=horizon, forecast=results)
-    except Exception as e:
-        logger.exception("Forecast error")
-        raise HTTPException(status_code=500, detail=f"Forecast error: {str(e)}")
+@app.get("/predict", response_model=ForecastPoint, tags=["Prediction"])
+def predict_next_hour() -> ForecastPoint:
+    """Predict the single next hour after the latest observed data."""
+    history = load_history()
+    return _recursive_forecast(load_model(), history, 1)[0]

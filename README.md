@@ -29,11 +29,14 @@ It features:
 ## 🧠 Model
 
 - Model type: `XGBoostRegressor`
-- Features used:
-  - `hour`: Hour of the day (0–23)
-  - `dayofweek`: Day of the week (0=Monday)
-  - `month`: Month number (1–12)
+- **17 features** built by the shared pipeline in `src/features.py`
+  (guarantees train/serve parity):
+  - **Calendar (10):** hour, dayofweek, month, is_weekend + cyclical (sin/cos) encodings
+  - **Lags (3):** consumption 1h / 24h / 168h ago
+  - **Rolling (4):** mean & std over the past 24h and 168h
 - Target: `Global_active_power` (kW)
+- Because the model uses *recent consumption*, the API forecasts **recursively**:
+  each predicted hour is fed back in to build the next hour's features.
 
 ---
 
@@ -56,8 +59,11 @@ energy-forecasting/
 ├── pipelines/              # Prefect automation
 │   └── prefect_flow.py
 ├── src/
+│   ├── features.py         # Shared feature pipeline (train/serve parity)
 │   ├── data_loader.py      # Preprocessing script
 │   └── train_model.py      # Model training & logging
+├── tests/                  # pytest unit tests
+├── pyproject.toml          # Deps + ruff / mypy / pytest config
 ├── Dockerfile              # Container setup
 ├── docker-compose.yaml     # Service orchestration
 ├── dvc.yaml                # Pipeline stages
@@ -73,10 +79,10 @@ energy-forecasting/
 | Stage               | Tool         | Description                                      |
 |---------------------|--------------|--------------------------------------------------|
 | Data versioning     | `DVC`        | Tracks data and models (e.g. energy_clean.csv)  |
-| Training            | `XGBoost`    | Model trained on 3 time features                |
+| Training            | `XGBoost`    | 17 features: calendar + lags + rolling stats    |
 | Experiment tracking | `MLflow`     | Logs parameters, metrics, model artifacts |
 | Automation          | `Prefect`    | Defines retraining pipeline (data → train)      |
-| Serving             | `FastAPI`    | Real-time prediction API on `/predict`          |
+| Serving             | `FastAPI`    | Recursive multi-step forecast on `/forecast`    |
 | Monitoring UI       | `Streamlit`  | Frontend to submit inputs & visualize results |
 | Packaging           | `Docker`     | Full stack in one container                     |
 
@@ -96,27 +102,24 @@ MLflow UI   → http://localhost:5050
 
 ---
 
-## 🚀 Prediction API (FastAPI)
-![image](https://github.com/user-attachments/assets/5956dd43-8acb-4ee6-b432-220d179daf5a)
+## 🚀 Forecasting API (FastAPI)
 
-**Endpoint:** `POST /predict`  
-**Input JSON:**
+The model is **stateful**: it forecasts forward from the latest observed data.
 
-```json
-{
-  "hour": 13,
-  "dayofweek": 2,
-  "month": 4
-}
-```
-
-**Response:**
+**`GET /forecast?horizon=24`** — recursive multi-step forecast (1–168 hours):
 
 ```json
 {
-  "predicted_energy_in_kW": 3.123
+  "from_timestamp": "2010-11-26T20:00:00",
+  "horizon_hours": 24,
+  "forecast": [
+    {"timestamp": "2010-11-26T21:00:00", "predicted_energy_kW": 1.234}
+  ]
 }
 ```
+
+Also: **`GET /predict`** (single next hour), **`GET /model/info`** (features,
+metrics, baseline skill), **`GET /health`** (liveness).
 
 ---
 
@@ -124,10 +127,10 @@ MLflow UI   → http://localhost:5050
 
 Access: `http://localhost:8502`
 
-- Input desired time (hour, weekday, month)
-- View predicted energy in kW
-- Visualize prediction history
-- Check real historical energy usage
+- Pick a forecast horizon (1–168 h) and run a recursive forward forecast
+- View the predicted consumption curve
+- See model metrics & baseline skill in the sidebar
+- Compare against recent actual consumption
 
 
 ![image](https://github.com/user-attachments/assets/716d1da6-d36b-48f6-967f-89fcdc56391a)

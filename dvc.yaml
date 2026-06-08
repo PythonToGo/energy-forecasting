@@ -11,6 +11,7 @@ stages:
     cmd: python src/train_model.py
     deps:
       - src/train_model.py
+      - src/features.py
       - data/processed/energy_clean.csv
     outs:
       - models/latest_model_path.txt

@@ -3,9 +3,10 @@ import os
 import pandas as pd
 
 
-def load_data(save_path: str = "data/processed/energy_clean.csv") -> None:
-    raw_path = "data/raw/household_power_consumption.txt"
-
+def load_data(
+    raw_path: str = "data/raw/household_power_consumption.txt",
+    save_path: str = "data/processed/energy_clean.csv",
+) -> None:
     df = pd.read_csv(raw_path, sep=";", na_values="?", low_memory=False)
     # Combine Date and Time columns into a single datetime column
     df["datetime"] = pd.to_datetime(df["Date"] + " " + df["Time"], dayfirst=True)
@@ -22,7 +23,7 @@ def load_data(save_path: str = "data/processed/energy_clean.csv") -> None:
     df = df.round(3)
 
     # save
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
     df.to_csv(save_path)
     print(f"Saved cleaned data to {save_path}")
 
