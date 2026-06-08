@@ -81,10 +81,16 @@ def load_history() -> pd.Series:
     if not os.path.exists(DATA_PATH):
         raise HTTPException(status_code=503, detail="Historical data not available")
     df = pd.read_csv(DATA_PATH, parse_dates=["datetime"], index_col="datetime")
-    series = df[features.TARGET].dropna()
-    if len(series) < features.WARMUP_HOURS:
-        raise HTTPException(status_code=503, detail="Not enough history for a forecast")
-    return series.tail(HISTORY_HOURS)
+    # Reindex onto a contiguous hourly grid so lag/rolling features carry the
+    # SAME hour-aligned meaning as during training (which builds features on the
+    # gap-preserving series from data_loader's resample). Dropping NaNs first
+    # would compress gaps and silently misalign the lags. Short gaps in the
+    # recent window are then filled so every feature is defined at forecast time.
+    series = df[features.TARGET].asfreq("h").tail(HISTORY_HOURS)
+    series = series.interpolate().ffill().bfill()
+    if len(series) <= features.WARMUP_HOURS or bool(series.isna().any()):
+        raise HTTPException(status_code=503, detail="Not enough clean history for a forecast")
+    return series
 
 
 def _recursive_forecast(model: Any, history: pd.Series, horizon: int) -> list[ForecastPoint]:

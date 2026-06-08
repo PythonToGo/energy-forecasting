@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import pytest
 
+import api.main as api_main
 from api.main import ForecastPoint, _recursive_forecast
 
 
@@ -34,3 +38,25 @@ def test_forecast_depends_on_recent_history() -> None:
     a = _recursive_forecast(_NaiveModel(), _history(offset=0.0), horizon=3)
     b = _recursive_forecast(_NaiveModel(), _history(offset=1000.0), horizon=3)
     assert a[0].predicted_energy_kW != b[0].predicted_energy_kW
+
+
+def test_load_history_is_contiguous_hourly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: serving must rebuild a contiguous hourly grid so lags stay
+    hour-aligned with training (the old dropna() compressed gaps and misaligned)."""
+    idx = pd.date_range("2020-01-01", periods=400, freq="h")
+    series = pd.Series(np.arange(400, dtype=float), index=idx)
+    # Gaps both outside and inside the recent window (last 216h = index 184..399).
+    series = series.drop(series.index[[50, 51, 300, 301]])
+    csv = tmp_path / "energy_clean.csv"
+    series.to_frame(name="Global_active_power").to_csv(csv, index_label="datetime")
+
+    monkeypatch.setattr(api_main, "DATA_PATH", str(csv))
+    api_main.load_history.cache_clear()
+    try:
+        hist = api_main.load_history()
+    finally:
+        api_main.load_history.cache_clear()
+
+    diffs = hist.index.to_series().diff().dropna()
+    assert (diffs == pd.Timedelta(hours=1)).all()  # contiguous hourly
+    assert not bool(hist.isna().any())  # gaps filled → features always defined
