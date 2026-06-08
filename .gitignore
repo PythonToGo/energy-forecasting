@@ -23,3 +23,9 @@ mlruns/
 
 # OS
 .DS_Store
+
+# Editor / local tooling
+.vscode/
+
+# Harness worktrees (created inside the project by start-task.sh)
+.worktrees/
