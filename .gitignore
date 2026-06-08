@@ -9,6 +9,13 @@ __pycache__/
 *.pyz
 
 venv/
+.venv/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
 # mlops/
 # data/processed/
 # data/raw/
@@ -23,3 +30,9 @@ mlruns/
 
 # OS
 .DS_Store
+
+# Editor / local tooling
+.vscode/
+
+# Harness worktrees (created inside the project by start-task.sh)
+.worktrees/

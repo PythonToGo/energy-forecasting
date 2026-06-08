@@ -1,0 +1,66 @@
+[project]
+name = "energy-forecasting"
+version = "0.1.0"
+description = "Production-grade MLOps pipeline for household energy-consumption forecasting."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "streamlit>=1.44",
+    "pandas>=2.2",
+    "numpy>=2.2",
+    "scikit-learn>=1.6",
+    "xgboost>=3.0",
+    "joblib>=1.4",
+    "mlflow>=2.21",
+    "dvc>=3.59",
+    "prefect>=3.3",
+    "pydantic>=2.11",
+    "pydantic-settings>=2.9",
+    "requests>=2.32",
+    "python-dotenv>=1.1",
+    "matplotlib>=3.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pre-commit>=3.7",
+    "pandas-stubs",
+    "types-requests",
+]
+
+# ── Tooling ──────────────────────────────────────────────────────────────────
+# pyproject is the source of truth for top-level deps and tooling config.
+# requirements.txt is retained for the current Docker build and will be retired
+# once the multi-service containerization phase lands.
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = [
+    "pandas.*",
+    "numpy.*",
+    "xgboost.*",
+    "joblib.*",
+    "mlflow.*",
+    "sklearn.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
