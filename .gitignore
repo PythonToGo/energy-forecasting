@@ -9,6 +9,13 @@ __pycache__/
 *.pyz
 
 venv/
+.venv/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
 # mlops/
 # data/processed/
 # data/raw/
