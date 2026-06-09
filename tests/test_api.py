@@ -13,10 +13,11 @@ from api.main import ForecastPoint, _recursive_forecast
 
 
 class _NaiveModel:
-    """Stand-in model: predicts the most recent value (the lag_1h feature)."""
+    """Stand-in quantile model: returns (p10, p50, p90) around the lag_1h value."""
 
     def predict(self, x: pd.DataFrame) -> np.ndarray:
-        return np.asarray([float(x["lag_1h"].iloc[0])])
+        v = float(x["lag_1h"].iloc[0])
+        return np.asarray([[v * 0.9, v, v * 1.1]])  # shape (1, 3)
 
 
 def _history(n: int = 200, offset: float = 0.0) -> pd.Series:
@@ -29,6 +30,7 @@ def test_forecast_shape_and_timestamps() -> None:
     points = _recursive_forecast(_NaiveModel(), hist, horizon=5)
     assert len(points) == 5
     assert all(isinstance(p, ForecastPoint) for p in points)
+    assert all(p.p10 <= p.p50 <= p.p90 for p in points)  # monotone interval
     assert points[0].timestamp == (hist.index[-1] + pd.Timedelta(hours=1)).to_pydatetime()
     assert points[1].timestamp == (hist.index[-1] + pd.Timedelta(hours=2)).to_pydatetime()
 
@@ -37,7 +39,7 @@ def test_forecast_depends_on_recent_history() -> None:
     """The core Phase 1 property: a different recent series → different forecast."""
     a = _recursive_forecast(_NaiveModel(), _history(offset=0.0), horizon=3)
     b = _recursive_forecast(_NaiveModel(), _history(offset=1000.0), horizon=3)
-    assert a[0].predicted_energy_kW != b[0].predicted_energy_kW
+    assert a[0].p50 != b[0].p50
 
 
 def test_load_history_is_contiguous_hourly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

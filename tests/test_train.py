@@ -30,4 +30,5 @@ def test_train_xgb_smoke(tmp_path: Path) -> None:
     meta = json.loads((model_dir / "latest_model_metadata.json").read_text())
     assert meta["features"] == train_model.FEATURE_COLUMNS
     assert len(meta["features"]) == 17
+    assert meta["quantiles"] == [0.1, 0.5, 0.9]
     assert meta["test_mae"] >= 0.0

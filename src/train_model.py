@@ -28,6 +28,11 @@ XGB_PARAMS = {
     "tree_method": "hist",
 }
 
+# Quantiles the model predicts. P50 (the median) is the point forecast — the 0.5
+# quantile minimizes MAE — and P10/P90 form an 80% prediction interval.
+QUANTILES = [0.1, 0.5, 0.9]
+MEDIAN_INDEX = QUANTILES.index(0.5)
+
 
 def time_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Time-ordered split: 70% train / 15% val / 15% test."""
@@ -76,6 +81,7 @@ def _persist_model(
     metadata = {
         "model_path": model_path,
         "features": FEATURE_COLUMNS,
+        "quantiles": QUANTILES,
         "trained_at": timestamp,
         "train_size": train_size,
         "val_size": val_size,
@@ -107,6 +113,7 @@ def _log_to_mlflow(  # pragma: no cover
     with mlflow.start_run(run_name=f"xgb_model_{timestamp}"):
         mlflow.log_params(XGB_PARAMS)
         mlflow.log_param("features", FEATURE_COLUMNS)
+        mlflow.log_param("quantiles", QUANTILES)
         mlflow.log_param("train_size", train_size)
         mlflow.log_param("val_size", val_size)
         mlflow.log_param("test_size", test_size)
@@ -141,16 +148,22 @@ def train_xgb(
     x_val, y_val = val_df[FEATURE_COLUMNS], val_df[TARGET]
     x_test, y_test = test_df[FEATURE_COLUMNS], test_df[TARGET]
 
-    model = xgb.XGBRegressor(**XGB_PARAMS)
-    model.fit(x_train, y_train, eval_set=[(x_val, y_val)], verbose=False)
+    model = xgb.XGBRegressor(
+        objective="reg:quantileerror",
+        quantile_alpha=np.array(QUANTILES),
+        **XGB_PARAMS,
+    )
+    model.fit(x_train, y_train)
 
-    val_pred = model.predict(x_val)
-    test_pred = model.predict(x_test)
+    # Multi-quantile predictions are (n, len(QUANTILES)); the median column is the
+    # point forecast used for the headline error metrics.
+    val_median = model.predict(x_val)[:, MEDIAN_INDEX]
+    test_median = model.predict(x_test)[:, MEDIAN_INDEX]
     baselines = compute_naive_baselines(test_df)
     metrics = {
-        "val_mae": float(mean_absolute_error(y_val, val_pred)),
-        "test_mae": float(mean_absolute_error(y_test, test_pred)),
-        "test_rmse": float(np.sqrt(mean_squared_error(y_test, test_pred))),
+        "val_mae": float(mean_absolute_error(y_val, val_median)),
+        "test_mae": float(mean_absolute_error(y_test, test_median)),
+        "test_rmse": float(np.sqrt(mean_squared_error(y_test, test_median))),
     }
     metrics["skill_vs_daily"] = 1 - metrics["test_mae"] / baselines["baseline_naive_daily_mae"]
     print(

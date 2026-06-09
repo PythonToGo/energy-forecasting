@@ -2,6 +2,7 @@
 
 import os
 
+import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
@@ -50,7 +51,14 @@ if st.button("Run forecast", type="primary"):
                 fc = pd.DataFrame(payload["forecast"])
                 fc["timestamp"] = pd.to_datetime(fc["timestamp"])
                 st.success(f"Forecast from {payload['from_timestamp']} for {horizon}h")
-                st.line_chart(fc.set_index("timestamp")["predicted_energy_kW"], height=300)
+                band = (
+                    alt.Chart(fc)
+                    .mark_area(opacity=0.25, color="#1f77b4")
+                    .encode(x="timestamp:T", y=alt.Y("p10:Q", title="kW"), y2="p90:Q")
+                )
+                median = alt.Chart(fc).mark_line(color="#1f77b4").encode(x="timestamp:T", y="p50:Q")
+                st.caption("Line = P50 (median); shaded band = P10–P90 (80% interval)")
+                st.altair_chart(band + median, use_container_width=True)
                 with st.expander("Forecast data"):
                     st.dataframe(fc)
             else:

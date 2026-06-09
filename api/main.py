@@ -46,7 +46,9 @@ app = FastAPI(
 
 class ForecastPoint(BaseModel):
     timestamp: datetime
-    predicted_energy_kW: float
+    p10: float  # lower bound of the 80% prediction interval
+    p50: float  # median — the point forecast
+    p90: float  # upper bound of the 80% prediction interval
 
 
 class ForecastResponse(BaseModel):
@@ -94,7 +96,12 @@ def load_history() -> pd.Series:
 
 
 def _recursive_forecast(model: Any, history: pd.Series, horizon: int) -> list[ForecastPoint]:
-    """Roll the model forward `horizon` hours, feeding predictions back as lags."""
+    """Roll the model forward `horizon` hours, feeding the median back as the lag.
+
+    The quantile model returns P10/P50/P90 per step; we sort to enforce
+    monotonicity (quantiles can occasionally cross) and feed P50 — the central
+    estimate — back in as the next step's most recent value.
+    """
     series = history.copy()
     points: list[ForecastPoint] = []
     for _ in range(horizon):
@@ -102,12 +109,15 @@ def _recursive_forecast(model: Any, history: pd.Series, horizon: int) -> list[Fo
         extended = pd.concat([series, pd.Series([np.nan], index=[next_ts])])
         feat = features.add_features(extended.to_frame(name=features.TARGET))
         x = feat.loc[[next_ts], features.FEATURE_COLUMNS]
-        y_pred = float(model.predict(x)[0])
-        series.loc[next_ts] = y_pred
+        q = np.sort(np.asarray(model.predict(x)).ravel())
+        p10, p50, p90 = float(q[0]), float(q[1]), float(q[2])
+        series.loc[next_ts] = p50
         points.append(
             ForecastPoint(
                 timestamp=next_ts.to_pydatetime(),
-                predicted_energy_kW=round(y_pred, 3),
+                p10=round(p10, 3),
+                p50=round(p50, 3),
+                p90=round(p90, 3),
             )
         )
     return points

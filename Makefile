@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test verify preprocess train clean
+.PHONY: install lint format typecheck test verify preprocess train backtest clean
 
 install:        ## Install runtime + dev dependencies (editable)
 	uv pip install -e ".[dev]"
@@ -22,6 +22,9 @@ preprocess:     ## Build the cleaned dataset
 
 train:          ## Train the model and log to MLflow
 	python src/train_model.py
+
+backtest:       ## Run walk-forward backtest → reports/backtest_report.json
+	python src/backtest.py
 
 clean:          ## Remove caches
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
